@@ -1,7 +1,7 @@
 import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import "./styles.css";
-import { parseWifiQr, type WifiPayload } from "./qr";
+import { parseWifiQr, revealInvisible, type WifiPayload } from "./qr";
 
 type ScannerState = "idle" | "scanning" | "joining" | "joined" | "error";
 
@@ -137,7 +137,7 @@ async function startScan(): Promise<void> {
         state = "idle";
         stopScan();
         renderPayload(payload);
-        setStatus(`Ready to join '${payload.ssid}'.`);
+        setStatus(`Ready to join '${revealInvisible(payload.ssid)}'.`);
       } catch (parseError) {
         setStatus(getErrorMessage(parseError, "QR code detected, but it is not a valid Wi-Fi payload."));
       }
@@ -166,7 +166,7 @@ async function joinNetwork(): Promise<void> {
   }
 
   state = "joining";
-  setStatus(`Joining '${currentPayload.ssid}'...`);
+  setStatus(`Joining '${revealInvisible(currentPayload.ssid)}'...`);
   toggleControls();
 
   const onProgress = new Channel<string>();
@@ -224,7 +224,7 @@ function resetResult(): void {
 }
 
 function renderPayload(payload: WifiPayload): void {
-  ssidElement.textContent = payload.ssid;
+  ssidElement.textContent = revealInvisible(payload.ssid);
   securityElement.textContent = payload.security;
   passwordElement.textContent = payload.password ? "Available" : "Open network";
   hiddenElement.textContent = payload.hidden ? "Yes" : "No";

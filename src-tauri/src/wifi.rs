@@ -6,7 +6,7 @@ use crate::process::run_with_timeout;
 #[cfg(target_os = "macos")]
 use objc2_core_location::{CLAuthorizationStatus, CLLocationManager};
 #[cfg(target_os = "macos")]
-use objc2_core_wlan::{CWInterface, CWNetwork, CWWiFiClient};
+use objc2_core_wlan::{CWInterface, CWNetwork, CWSecurity, CWWiFiClient};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSError, NSString};
 
@@ -49,6 +49,25 @@ pub enum CoreWlanError {
     Rejected(String),
 }
 
+/// CoreWLAN security modes that satisfy a QR code's normalized security type
+/// ("wpa", "wep" or "nopass"). Joining is refused for any other mode so a
+/// same-named network with weaker security (an "evil twin") is never chosen.
+#[cfg(target_os = "macos")]
+fn accepted_securities(security: &str) -> &'static [CWSecurity] {
+    match security {
+        "wpa" => &[
+            CWSecurity::WPAPersonal,
+            CWSecurity::WPAPersonalMixed,
+            CWSecurity::WPA2Personal,
+            CWSecurity::Personal,
+            CWSecurity::WPA3Personal,
+            CWSecurity::WPA3Transition,
+        ],
+        "wep" => &[CWSecurity::WEP],
+        _ => &[CWSecurity::None, CWSecurity::OWE, CWSecurity::OWETransition],
+    }
+}
+
 /// Whether Location Services access has been refused. CoreWLAN needs it both to
 /// scan and to read the current SSID, so when it is refused the CoreWLAN path
 /// can only waste time.
@@ -71,6 +90,7 @@ pub fn location_denied() -> bool {
 #[cfg(target_os = "macos")]
 pub fn join_via_corewlan(
     ssid: &str,
+    security: &str,
     password: Option<&str>,
     progress: &dyn Fn(&str),
 ) -> Result<String, CoreWlanError> {
@@ -86,13 +106,15 @@ pub fn join_via_corewlan(
                 .unwrap_or_else(|| "Wi-Fi".to_string())
         };
 
-        if current_ssid(&interface).as_deref() == Some(ssid) {
+        if current_ssid(&interface).as_deref() == Some(ssid)
+            && accepted_securities(security).contains(&interface.security())
+        {
             log::info!("Already connected to '{ssid}'");
             return Ok(interface_name());
         }
 
         progress(&format!("Looking for '{ssid}'..."));
-        let network = find_network(&interface, ssid)?;
+        let network = find_network(&interface, ssid, security)?;
         let ns_password = password.map(NSString::from_str);
 
         for attempt in 1..=COREWLAN_MAX_ATTEMPTS {
@@ -136,28 +158,48 @@ pub fn join_via_corewlan(
     }
 }
 
-/// Scan for `ssid`, retrying once because a scan can miss a network that is in
-/// range (or fail transiently while the radio is busy).
+/// Scan for `ssid` and return a network whose security matches `security`,
+/// retrying once because a scan can miss a network that is in range (or fail
+/// transiently while the radio is busy).
+///
+/// Anyone can broadcast any SSID, so the name alone does not identify the
+/// network the QR code describes. If the only networks with that name use a
+/// different security type, the join is refused as `Rejected` so the
+/// networksetup fallback (which cannot check security) does not join it either.
 #[cfg(target_os = "macos")]
 fn find_network(
     interface: &CWInterface,
     ssid: &str,
+    security: &str,
 ) -> Result<objc2::rc::Retained<CWNetwork>, CoreWlanError> {
     let ns_ssid = NSString::from_str(ssid);
+    let accepted = accepted_securities(security);
     let mut last_error = format!("Network '{ssid}' was not found in range.");
+    let mut saw_mismatch = false;
 
     for _ in 0..2 {
         match unsafe { interface.scanForNetworksWithName_includeHidden_error(Some(&ns_ssid), true) }
         {
             Ok(networks) => {
-                if let Some(network) = networks.anyObject() {
-                    return Ok(network);
+                for network in networks.iter() {
+                    if accepted
+                        .iter()
+                        .any(|mode| unsafe { network.supportsSecurity(*mode) })
+                    {
+                        return Ok(network);
+                    }
+                    saw_mismatch = true;
                 }
             }
             Err(err) => last_error = nserror_message(&err),
         }
     }
 
+    if saw_mismatch {
+        return Err(CoreWlanError::Rejected(format!(
+            "Found a network named '{ssid}', but it does not use the security the QR code declares, so WiLens did not join it."
+        )));
+    }
     Err(CoreWlanError::Unavailable(last_error))
 }
 
@@ -182,6 +224,18 @@ fn wait_until_connected(interface: &CWInterface, ssid: &str) -> bool {
 #[cfg(target_os = "macos")]
 fn current_ssid(interface: &CWInterface) -> Option<String> {
     unsafe { interface.ssid().map(|name| name.to_string()) }
+}
+
+/// Whether the default Wi-Fi interface's current security satisfies the QR
+/// code's normalized security type. An unreadable security mode counts as a
+/// mismatch.
+#[cfg(target_os = "macos")]
+pub fn current_security_matches(security: &str) -> bool {
+    unsafe {
+        CWWiFiClient::sharedWiFiClient()
+            .interface()
+            .is_some_and(|interface| accepted_securities(security).contains(&interface.security()))
+    }
 }
 
 /// The SSID of the default Wi-Fi interface, if CoreWLAN can report it.
@@ -251,11 +305,49 @@ fn reports_failure(output: &str) -> bool {
         .any(|needle| lower.contains(needle))
 }
 
+/// Whether `ssid` is in the Wi-Fi interface's preferred (saved) network list.
+/// An unreadable list counts as not saved, matching the behavior before this
+/// check existed.
+pub fn is_saved_network(ssid: &str) -> bool {
+    let Ok(interface) = detect_wifi_interface() else {
+        return false;
+    };
+    let output = run_with_timeout(
+        Command::new("/usr/sbin/networksetup")
+            .args(["-listpreferredwirelessnetworks", interface.as_str()]),
+        NETWORKSETUP_TIMEOUT,
+        "networksetup",
+    );
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_preferred_networks(&String::from_utf8_lossy(&output.stdout))
+                .iter()
+                .any(|saved| saved == ssid)
+        }
+        _ => {
+            log::warn!("Could not read the saved Wi-Fi network list");
+            false
+        }
+    }
+}
+
+/// Parse `networksetup -listpreferredwirelessnetworks`: a header line, then one
+/// tab-indented SSID per line. Only the indent is stripped so SSIDs keep any
+/// leading or trailing spaces of their own.
+pub fn parse_preferred_networks(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.strip_prefix('\t'))
+        .map(|ssid| ssid.trim_end_matches('\r').to_string())
+        .collect()
+}
+
 pub fn detect_wifi_interface() -> Result<String, String> {
-    let output = Command::new("/usr/sbin/networksetup")
-        .arg("-listallhardwareports")
-        .output()
-        .map_err(|error| format!("Failed to inspect hardware ports: {error}"))?;
+    let output = run_with_timeout(
+        Command::new("/usr/sbin/networksetup").arg("-listallhardwareports"),
+        NETWORKSETUP_TIMEOUT,
+        "networksetup",
+    )?;
 
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -304,7 +396,7 @@ pub fn parse_hardware_ports(output: &str) -> Vec<HardwarePort> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hardware_ports, reports_failure};
+    use super::{parse_hardware_ports, parse_preferred_networks, reports_failure};
 
     #[test]
     fn detects_networksetup_failure_text() {
@@ -313,6 +405,14 @@ mod tests {
             "Failed to join network MyWifi.\nError: -3900  The operation couldn't be completed."
         ));
         assert!(!reports_failure(""));
+    }
+
+    #[test]
+    fn parses_preferred_networks_keeping_ssid_spaces() {
+        let saved = parse_preferred_networks(
+            "Preferred networks on en0:\n\tHome\n\tCafe Upstairs \n\t Leading\n",
+        );
+        assert_eq!(saved, vec!["Home", "Cafe Upstairs ", " Leading"]);
     }
 
     #[test]

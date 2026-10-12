@@ -7,7 +7,7 @@ mod process;
 #[cfg(target_os = "macos")]
 mod wifi;
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct JoinWifiRequest {
     ssid: String,
@@ -15,6 +15,18 @@ struct JoinWifiRequest {
     security: String,
     #[serde(default)]
     hidden: bool,
+}
+
+// Hand-written so a stray `{:?}` can never put the password in a log.
+impl std::fmt::Debug for JoinWifiRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JoinWifiRequest")
+            .field("ssid", &self.ssid)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .field("security", &self.security)
+            .field("hidden", &self.hidden)
+            .finish()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -112,7 +124,7 @@ fn join_platform(
             "Location access is denied, so CoreWLAN cannot scan.".to_string(),
         ))
     } else {
-        wifi::join_via_corewlan(ssid, password, progress)
+        wifi::join_via_corewlan(ssid, security, password, progress)
     };
 
     match corewlan_result {
@@ -130,24 +142,46 @@ fn join_platform(
             if let Some(password) = password {
                 ensure_not_flag(password, "Password")?;
             }
+            // networksetup stores whatever password it is given, so a QR code
+            // naming a network the user already saved could replace their
+            // working password. Leave saved networks to macOS.
+            if wifi::is_saved_network(ssid) {
+                return Err(ErrorResponse {
+                    message: format!(
+                        "'{ssid}' is already saved on this Mac. Pick it from the Wi-Fi menu, or allow Location access for WiLens so it can join safely."
+                    ),
+                });
+            }
             progress("Trying the system fallback...");
             let interface = wifi::join_via_networksetup(ssid, security, password)
                 .map_err(|message| ErrorResponse { message })?;
-            // The SSID is unreadable without Location access; only a mismatch
-            // is conclusive.
-            if let Some(current) = wifi::default_interface_ssid() {
-                if current != ssid {
+            // The SSID is unreadable without Location access, so the join can
+            // only be confirmed when it is readable and matches. networksetup
+            // cannot be told the security type, so check that afterwards too.
+            let verified = match wifi::default_interface_ssid() {
+                Some(current) if current != ssid => {
                     return Err(ErrorResponse {
                         message: format!(
                             "Could not join '{ssid}'; still connected to '{current}'."
                         ),
                     });
                 }
-            }
+                Some(_) => {
+                    if !wifi::current_security_matches(security) {
+                        return Err(ErrorResponse {
+                            message: format!(
+                                "Joined a network named '{ssid}', but it does not use the security the QR code declares. Check the Wi-Fi menu before using it."
+                            ),
+                        });
+                    }
+                    true
+                }
+                None => false,
+            };
             Ok(Joined {
                 interface,
                 method: "networksetup",
-                verified: true,
+                verified,
             })
         }
     }
@@ -313,6 +347,19 @@ mod tests {
         assert_eq!(normalize_security("WPA").unwrap(), "wpa");
         assert_eq!(normalize_security("wep").unwrap(), "wep");
         assert_eq!(normalize_security(" nopass ").unwrap(), "nopass");
+    }
+
+    #[test]
+    fn debug_output_redacts_the_password() {
+        let request = super::JoinWifiRequest {
+            ssid: "Cafe".to_string(),
+            password: Some("secret-pass".to_string()),
+            security: "wpa".to_string(),
+            hidden: false,
+        };
+        let debug = format!("{request:?}");
+        assert!(debug.contains("Cafe"));
+        assert!(!debug.contains("secret-pass"));
     }
 
     #[test]

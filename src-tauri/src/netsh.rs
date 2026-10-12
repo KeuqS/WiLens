@@ -50,9 +50,7 @@ pub fn join_via_netsh(
     hidden: bool,
     progress: &dyn Fn(&str),
 ) -> Result<NetshJoin, String> {
-    if ssid.contains('"') {
-        return Err("Network names containing '\"' are not supported on Windows.".to_string());
-    }
+    validate_profile_name(ssid)?;
 
     if let Some(status) = interface_status() {
         if status.ssids.iter().any(|current| current == ssid) {
@@ -72,12 +70,22 @@ pub fn join_via_netsh(
         None => None,
     };
 
-    progress(&format!("Saving the Wi-Fi profile for '{ssid}'..."));
-    add_profile(&profile_xml(ssid, &security, key, hidden))?;
+    // A saved profile with this name belongs to the user (or an earlier
+    // join). Never overwrite it with QR contents, and never delete it: connect
+    // with it as-is and report failure without touching it.
+    let created = !profile_exists(ssid);
+    if created {
+        progress(&format!("Saving the Wi-Fi profile for '{ssid}'..."));
+        add_profile(&profile_xml(ssid, &security, key, hidden))?;
+    } else {
+        log::info!("Using the existing Wi-Fi profile for '{ssid}'");
+    }
 
     progress(&format!("Connecting to '{ssid}'..."));
     if let Err(error) = netsh(&["wlan", "connect", &format!("name={ssid}")]) {
-        delete_profile(ssid);
+        if created {
+            delete_profile(ssid);
+        }
         return Err(error);
     }
 
@@ -90,7 +98,7 @@ pub fn join_via_netsh(
             interface: "Wi-Fi".to_string(),
             verified: false,
         }),
-        ConnectOutcome::TimedOut => {
+        ConnectOutcome::TimedOut if created => {
             // Don't leave a profile with a wrong password behind for Windows
             // to keep retrying in the background.
             delete_profile(ssid);
@@ -101,6 +109,9 @@ pub fn join_via_netsh(
             };
             Err(format!("Could not join '{ssid}'.{hint}"))
         }
+        ConnectOutcome::TimedOut => Err(format!(
+            "Could not join '{ssid}' with the Wi-Fi profile already saved on this PC. WiLens left that profile unchanged; forget it in Windows Wi-Fi settings to use the scanned details instead."
+        )),
     }
 }
 
@@ -134,10 +145,25 @@ fn wait_until_connected(ssid: &str) -> ConnectOutcome {
 #[cfg(windows)]
 fn interface_status() -> Option<InterfaceStatus> {
     let output = netsh(&["wlan", "show", "interfaces"]).ok()?;
-    if output.to_ascii_lowercase().contains("location") {
+    if is_location_refusal(&output) {
         return None;
     }
     Some(parse_interfaces(&output))
+}
+
+/// Whether a profile with this name is already saved. Windows matches profile
+/// names case-insensitively, so this does too.
+#[cfg(windows)]
+fn profile_exists(ssid: &str) -> bool {
+    match netsh(&["wlan", "show", "profiles"]) {
+        Ok(output) => parse_profile_names(&output)
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(ssid)),
+        Err(error) => {
+            log::warn!("Could not list saved Wi-Fi profiles: {error}");
+            false
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -151,7 +177,12 @@ fn add_profile(xml: &str) -> Result<(), String> {
         .unwrap_or_default();
     let path =
         std::env::temp_dir().join(format!("wilens-profile-{}-{nanos}.xml", std::process::id()));
-    std::fs::write(&path, xml)
+    // create_new refuses to follow or reuse anything already at this path.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, xml.as_bytes()))
         .map_err(|error| format!("Failed to write Wi-Fi profile: {error}"))?;
 
     let result = netsh(&[
@@ -201,6 +232,27 @@ fn netsh(args: &[&str]) -> Result<String, String> {
     } else {
         details
     })
+}
+
+/// netsh treats '*' and '?' in a profile `name=` as wildcards ("delete profile
+/// name=*" deletes every saved profile), and '"' would end the quoted
+/// argument. Refuse them so the SSID is always a literal profile name.
+pub fn validate_profile_name(ssid: &str) -> Result<(), String> {
+    match ssid.chars().find(|char| matches!(char, '*' | '?' | '"')) {
+        Some(char) => Err(format!(
+            "Network names containing '{char}' are not supported on Windows."
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Whether `netsh wlan show interfaces` printed the Location-permission refusal
+/// (Windows 11 24H2+) instead of interface details. Real status output is made
+/// of "Key : Value" lines, so a connected SSID that happens to contain the word
+/// "location" is not mistaken for the refusal.
+pub fn is_location_refusal(output: &str) -> bool {
+    output.to_ascii_lowercase().contains("location")
+        && !output.lines().any(|line| line.contains(" : "))
 }
 
 /// WLAN profile security settings for one of the normalized QR security types.
@@ -298,6 +350,18 @@ fn xml_escape(value: &str) -> String {
     escaped
 }
 
+/// Parse `netsh wlan show profiles`. Each saved profile is a
+/// `<localized label> : <name>` line; headers and "<None>" placeholders have no
+/// " : ". Only the separator is removed so names keep their own spaces.
+pub fn parse_profile_names(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| line.split_once(" : "))
+        .map(|(_, name)| name.trim_end_matches('\r').to_string())
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
 pub struct InterfaceStatus {
     /// Name of the first interface, e.g. "Wi-Fi".
     pub interface: String,
@@ -307,19 +371,26 @@ pub struct InterfaceStatus {
 
 /// Parse `netsh wlan show interfaces`. Lines are `Key : Value`; keys never
 /// contain ':' but values (MAC addresses) do, so split on the first one.
-/// "SSID" is not localized, unlike most other keys.
+/// "SSID" is not localized, unlike most other keys. Only the single space after
+/// the colon is removed from SSIDs, so names with their own leading or trailing
+/// spaces still match the requested SSID exactly.
 pub fn parse_interfaces(output: &str) -> InterfaceStatus {
     let mut interface = None;
     let mut ssids = Vec::new();
 
     for line in output.lines() {
-        let Some((key, value)) = line.split_once(':') else {
+        let Some((key, raw_value)) = line.split_once(':') else {
             continue;
         };
-        let (key, value) = (key.trim(), value.trim());
-        match key {
-            "Name" if interface.is_none() => interface = Some(value.to_string()),
-            "SSID" if !value.is_empty() => ssids.push(value.to_string()),
+        let raw_value = raw_value.trim_end_matches('\r');
+        match key.trim() {
+            "Name" if interface.is_none() => interface = Some(raw_value.trim().to_string()),
+            "SSID" => {
+                let ssid = raw_value.strip_prefix(' ').unwrap_or(raw_value);
+                if !ssid.is_empty() {
+                    ssids.push(ssid.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -332,7 +403,10 @@ pub fn parse_interfaces(output: &str) -> InterfaceStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_interfaces, profile_xml, xml_escape, ProfileSecurity};
+    use super::{
+        is_location_refusal, parse_interfaces, parse_profile_names, profile_xml,
+        validate_profile_name, xml_escape, ProfileSecurity,
+    };
 
     #[test]
     fn wpa_profile_has_passphrase_and_hex_ssid() {
@@ -398,6 +472,41 @@ mod tests {
         );
         assert_eq!(status.interface, "Wi-Fi");
         assert_eq!(status.ssids, vec!["Cafe: Upstairs".to_string()]);
+    }
+
+    #[test]
+    fn keeps_spaces_that_belong_to_the_ssid() {
+        let status = parse_interfaces(
+            "    Name                   : Wi-Fi\r\n    SSID                   :  Padded \r\n",
+        );
+        assert_eq!(status.ssids, vec![" Padded ".to_string()]);
+    }
+
+    #[test]
+    fn rejects_netsh_wildcards_and_quotes_in_profile_names() {
+        assert!(validate_profile_name("*").is_err());
+        assert!(validate_profile_name("Home*").is_err());
+        assert!(validate_profile_name("Cafe?").is_err());
+        assert!(validate_profile_name("Say \"hi\"").is_err());
+        assert!(validate_profile_name("Cafe: Upstairs 5G").is_ok());
+    }
+
+    #[test]
+    fn parses_saved_profile_names() {
+        let names = parse_profile_names(
+            "Profiles on interface Wi-Fi:\r\n\r\nGroup policy profiles (read only)\r\n---------------------------------\r\n    <None>\r\n\r\nUser profiles\r\n-------------\r\n    All User Profile     : Home\r\n    All User Profile     : Cafe: Upstairs\r\n    User Profile         :  Padded\r\n",
+        );
+        assert_eq!(names, vec!["Home", "Cafe: Upstairs", " Padded"]);
+    }
+
+    #[test]
+    fn detects_only_the_real_location_refusal() {
+        assert!(is_location_refusal(
+            "Network shell commands need location permission to access WLAN information.\r\nTurn on Location services (ms-settings:privacy-location).\r\n"
+        ));
+        assert!(!is_location_refusal(
+            "    Name                   : Wi-Fi\r\n    SSID                   : Location Cafe\r\n"
+        ));
     }
 
     #[test]

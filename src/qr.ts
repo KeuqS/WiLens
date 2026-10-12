@@ -58,6 +58,18 @@ export function parseWifiQr(raw: string): WifiPayload {
   };
 }
 
+// Bidi controls and zero-width characters render invisibly or reorder text,
+// so a QR code could make the shown network name differ from the one joined.
+const INVISIBLE_CHARACTERS = /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+
+/** Make invisible or direction-changing characters visible as `⟨U+XXXX⟩`. */
+export function revealInvisible(text: string): string {
+  return text.replace(
+    INVISIBLE_CHARACTERS,
+    (char) => `⟨U+${char.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`,
+  );
+}
+
 function normalizeSecurity(value: string): WifiSecurity {
   const normalized = value.toUpperCase();
 
