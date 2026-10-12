@@ -25,6 +25,7 @@
   "overrides": {
     "vite": "^8",
     "esbuild": ">=0.28.1",
-    "picomatch": ">=4.0.4"
+    "picomatch": ">=4.0.4",
+    "source-map-js": ">=1.2.2"
   }
 }
