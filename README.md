@@ -1,6 +1,7 @@
 # WiLens
 
-WiLens is a macOS desktop app that scans a Wi-Fi QR code and joins the network.
+WiLens is a macOS desktop app (with an experimental Windows build) that scans a
+Wi-Fi QR code and joins the network.
 
 [![WiLens intro video](docs/media/wilens-intro.gif)](docs/media/wilens-intro.mp4)
 
@@ -116,7 +117,7 @@ GitHub workflow, which uses a real Windows runner.
 
 ## Notes
 
-- WiLens currently targets macOS (Apple Silicon).
+- WiLens targets macOS on Apple Silicon. The Windows (x64) build is experimental.
 - If Location is denied or the quiet join can't connect, WiLens falls back to the
   `networksetup` tool, which shows a macOS administrator approval prompt.
 - All permission prompts are controlled by macOS, not by the app UI.
