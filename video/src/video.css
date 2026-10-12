@@ -1,0 +1,7 @@
+/* Overrides so the real app stylesheet renders deterministically inside a
+   fixed-size mock window: no viewport units, no CSS-clock animations. */
+.wl-app .shell { min-height: 0; }
+.wl-app h1 { font-size: 84px; } /* 7vw of the 1200px app window */
+.wl-app .button { transition: none; position: relative; }
+.wl-app .scan-overlay::after { animation: none; transform: translateY(var(--sweep, 0px)); }
+.wl-app .button.is-busy::before { animation: none; transform: rotate(var(--spin, 0deg)); }
