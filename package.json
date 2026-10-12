@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
     "release:win": "cargo tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --config '{\"bundle\":{\"targets\":[\"nsis\"]}}' && cp \"$(ls -t src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/WiLens_*_x64-setup.exe | head -1)\" src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/WiLens-setup.exe && echo 'Built src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/WiLens-setup.exe'",
@@ -18,6 +19,7 @@
     "@zxing/browser": "^0.2.1"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4",
     "vitest": "^5.0.3"

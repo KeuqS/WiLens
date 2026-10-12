@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWifiQr } from "./qr";
+import { parseWifiQr, revealInvisible } from "./qr";
 
 describe("parseWifiQr", () => {
   it("parses a standard WPA payload", () => {
@@ -135,5 +135,16 @@ describe("parseWifiQr", () => {
         /Unsupported Wi-Fi security type/i,
       );
     });
+  });
+});
+
+describe("revealInvisible", () => {
+  it("leaves ordinary names unchanged", () => {
+    expect(revealInvisible("Café 5G")).toBe("Café 5G");
+  });
+
+  it("shows bidi and zero-width characters as code points", () => {
+    expect(revealInvisible("Home‮gnp.exe")).toBe("Home⟨U+202E⟩gnp.exe");
+    expect(revealInvisible("Ca​fe")).toBe("Ca⟨U+200B⟩fe");
   });
 });

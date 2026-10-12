@@ -4,5 +4,9 @@
 <dict>
   <key>com.apple.security.device.camera</key>
   <true/>
+  <!-- Hardened-runtime apps (required for notarization) need this to use
+       Location Services, which CoreWLAN requires for Wi-Fi scanning. -->
+  <key>com.apple.security.personal-information.location</key>
+  <true/>
 </dict>
 </plist>

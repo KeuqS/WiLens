@@ -1,7 +1,7 @@
 import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import "./styles.css";
-import { parseWifiQr, type WifiPayload } from "./qr";
+import { parseWifiQr, revealInvisible, type WifiPayload } from "./qr";
 
 type ScannerState = "idle" | "scanning" | "joining" | "joined" | "error";
 
@@ -18,9 +18,10 @@ const systemNote = isWindows
      it — no administrator prompt. On Windows 11, turning on Location access
      for desktop apps lets WiLens confirm the connection.`
   : `macOS requires Location access to scan for Wi-Fi networks, so it asks
-     the first time — WiLens never tracks your location. If the quick join
-     can't connect, it falls back to <code>networksetup</code>, which may
-     show a macOS administrator prompt.`;
+     the first time — WiLens never tracks your location. It uses the scan to
+     check the network matches the QR code. Without Location access WiLens can
+     still join open networks; for secured ones, copy the password and join
+     from the Wi-Fi menu.`;
 
 if (!app) {
   throw new Error("App root element was not found.");
@@ -137,7 +138,7 @@ async function startScan(): Promise<void> {
         state = "idle";
         stopScan();
         renderPayload(payload);
-        setStatus(`Ready to join '${payload.ssid}'.`);
+        setStatus(`Ready to join '${revealInvisible(payload.ssid)}'.`);
       } catch (parseError) {
         setStatus(getErrorMessage(parseError, "QR code detected, but it is not a valid Wi-Fi payload."));
       }
@@ -166,7 +167,7 @@ async function joinNetwork(): Promise<void> {
   }
 
   state = "joining";
-  setStatus(`Joining '${currentPayload.ssid}'...`);
+  setStatus(`Joining '${revealInvisible(currentPayload.ssid)}'...`);
   toggleControls();
 
   const onProgress = new Channel<string>();
@@ -224,7 +225,7 @@ function resetResult(): void {
 }
 
 function renderPayload(payload: WifiPayload): void {
-  ssidElement.textContent = payload.ssid;
+  ssidElement.textContent = revealInvisible(payload.ssid);
   securityElement.textContent = payload.security;
   passwordElement.textContent = payload.password ? "Available" : "Open network";
   hiddenElement.textContent = payload.hidden ? "Yes" : "No";
