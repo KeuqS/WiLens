@@ -8,7 +8,7 @@
     "still": "remotion still src/index.ts WiLensIntro"
   },
   "dependencies": {
-    "@remotion/cli": "4.0.531",
+    "@remotion/cli": "4.0.534",
     "qrcode": "1.5.4",
     "react": "19",
     "react-dom": "19",
