@@ -36,6 +36,14 @@ WIFI:T:WPA;S:MyWifi;P:mypassword;;
 7. Click `Join network`.
 8. Approve any macOS prompt if shown.
 
+## Share a Network
+
+Switch to **Share a network**, type the network name, security type, and
+password, and WiLens draws a standard Wi-Fi QR code as you type. **Save image…**
+asks where to save a PNG (the network name is printed under the code; the
+password is not). Anyone who sees the code can join the network, so share it
+only with people you trust. WiLens does not keep the details after you close it.
+
 ## Expected macOS Prompts
 
 WiLens may trigger system prompts for:

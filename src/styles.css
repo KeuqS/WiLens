@@ -34,6 +34,11 @@ select {
   min-height: 100vh;
 }
 
+/* Panels set their own display, which would otherwise override [hidden]. */
+[hidden] {
+  display: none !important;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 1.05fr 1fr;
@@ -43,7 +48,8 @@ select {
 }
 
 .hero,
-.scanner-panel {
+.scanner-panel,
+.share-panel {
   backdrop-filter: blur(20px);
   background: rgba(6, 13, 11, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -74,6 +80,38 @@ select {
 
 .hero-badge .eyebrow {
   margin: 0;
+}
+
+.mode-switch {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 0.25rem;
+  margin-bottom: 1.6rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.mode-tab {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
+  color: rgba(236, 243, 239, 0.72);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.mode-tab[aria-selected="true"] {
+  color: #10211d;
+  background: #d4d086;
+}
+
+.mode-tab:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .eyebrow {
@@ -236,6 +274,92 @@ h1 {
   50% {
     transform: translateY(140px);
   }
+}
+
+.share-panel {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  align-content: start;
+}
+
+.share-form {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.4rem;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.field > span:first-child {
+  color: rgba(236, 243, 239, 0.62);
+  font-size: 0.82rem;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  color: #ecf3ef;
+  background: rgba(6, 13, 11, 0.55);
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid #d4d086;
+  outline-offset: 1px;
+}
+
+.password-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.password-row .button {
+  padding: 0.6rem 1rem;
+}
+
+.checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: rgba(236, 243, 239, 0.82);
+}
+
+.qr-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.8rem;
+  padding: 1.4rem;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.qr-canvas {
+  width: min(100%, 280px);
+  height: auto;
+  border-radius: 16px;
+}
+
+.qr-card.is-empty .qr-canvas {
+  display: none;
+}
+
+.qr-hint {
+  margin: 0;
+  color: rgba(236, 243, 239, 0.72);
+  text-align: center;
+}
+
+.qr-card .system-note {
+  margin: 0;
 }
 
 .result-card {

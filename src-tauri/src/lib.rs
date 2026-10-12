@@ -63,6 +63,74 @@ async fn join_wifi(
     })?
 }
 
+/// Largest QR image the frontend may ask to save. A rendered Wi-Fi QR code is a
+/// few tens of kilobytes; the cap only stops a runaway buffer.
+const MAX_QR_IMAGE_BYTES: usize = 4 * 1024 * 1024;
+
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// Ask the user where to save a generated Wi-Fi QR code and write it there.
+/// The save dialog runs on the Rust side, so the webview never chooses a path
+/// and needs no file-system or dialog permissions. Returns false if the user
+/// cancels.
+#[tauri::command]
+async fn save_qr_image(
+    app: tauri::AppHandle,
+    png: Vec<u8>,
+    suggested_name: String,
+) -> Result<bool, ErrorResponse> {
+    if png.len() > MAX_QR_IMAGE_BYTES || !png.starts_with(&PNG_SIGNATURE) {
+        return Err(ErrorResponse {
+            message: "The QR code image is not a valid PNG.".to_string(),
+        });
+    }
+    let file_name = format!("{}.png", safe_file_stem(&suggested_name));
+
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+
+        let Some(choice) = app
+            .dialog()
+            .file()
+            .add_filter("PNG image", &["png"])
+            .set_file_name(file_name)
+            .blocking_save_file()
+        else {
+            return Ok(false);
+        };
+        let mut path = choice.into_path().map_err(|error| ErrorResponse {
+            message: format!("Could not use that location: {error}"),
+        })?;
+        if path.extension().is_none() {
+            path.set_extension("png");
+        }
+        std::fs::write(&path, &png).map_err(|error| ErrorResponse {
+            message: format!("Could not save the QR code: {error}"),
+        })?;
+        Ok(true)
+    })
+    .await
+    .map_err(|error| ErrorResponse {
+        message: format!("Saving the QR code ended unexpectedly: {error}"),
+    })?
+}
+
+/// A file name stem from a network name: letters, digits, spaces, '-' and '_'
+/// only, so nothing in an SSID can steer the suggested path.
+fn safe_file_stem(name: &str) -> String {
+    let stem: String = name
+        .chars()
+        .filter(|char| char.is_alphanumeric() || matches!(char, ' ' | '-' | '_'))
+        .take(48)
+        .collect();
+    let stem = stem.trim();
+    if stem.is_empty() {
+        "wifi-qr".to_string()
+    } else {
+        format!("wifi-{stem}")
+    }
+}
+
 /// Outcome of a platform join.
 struct Joined {
     interface: String,
@@ -279,12 +347,13 @@ fn request_location_authorization() {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|_app| {
             #[cfg(target_os = "macos")]
             request_location_authorization();
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![join_wifi])
+        .invoke_handler(tauri::generate_handler![join_wifi, save_qr_image])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -293,7 +362,7 @@ pub fn run() {
 mod tests {
     #[cfg(target_os = "macos")]
     use super::ensure_not_flag;
-    use super::{normalize_security, sanitize_optional, sanitize_required};
+    use super::{normalize_security, safe_file_stem, sanitize_optional, sanitize_required};
 
     #[test]
     fn sanitize_required_accepts_a_normal_value() {
@@ -341,6 +410,14 @@ mod tests {
         assert_eq!(normalize_security("WPA").unwrap(), "wpa");
         assert_eq!(normalize_security("wep").unwrap(), "wep");
         assert_eq!(normalize_security(" nopass ").unwrap(), "nopass");
+    }
+
+    #[test]
+    fn safe_file_stem_keeps_only_plain_characters() {
+        assert_eq!(safe_file_stem("Cafe Upstairs"), "wifi-Cafe Upstairs");
+        assert_eq!(safe_file_stem("../../etc/passwd"), "wifi-etcpasswd");
+        assert_eq!(safe_file_stem("***"), "wifi-qr");
+        assert_eq!(safe_file_stem(""), "wifi-qr");
     }
 
     #[test]

@@ -1,9 +1,28 @@
 import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import "./styles.css";
-import { parseWifiQr, revealInvisible, type WifiPayload } from "./qr";
+import {
+  buildWifiQr,
+  parseWifiQr,
+  revealInvisible,
+  type WifiPayload,
+  type WifiSecurity,
+} from "./qr";
+import { canvasToPng, drawWifiQr } from "./share";
 
 type ScannerState = "idle" | "scanning" | "joining" | "joined" | "error";
+type Mode = "join" | "share";
+
+const HERO_TEXT: Record<Mode, { title: string; lede: string }> = {
+  join: {
+    title: "Point your camera at a Wi-Fi QR code.",
+    lede: "WiLens scans the code, extracts the network details, and lets you join from a single desktop window.",
+  },
+  share: {
+    title: "Share your Wi-Fi with a QR code.",
+    lede: "Type your network's details and WiLens makes a code guests can scan with their phone camera. Nothing is saved or sent anywhere.",
+  },
+};
 
 interface JoinWifiResponse {
   interface: string;
@@ -34,19 +53,20 @@ app.innerHTML = `
         <img src="/wilen-logo.png" alt="" class="hero-logo" />
         <p class="eyebrow">${isWindows ? "Windows" : "macOS"} Wi-Fi QR utility</p>
       </div>
-      <h1>Point your camera at a Wi-Fi QR code.</h1>
-      <p class="lede">
-        WiLens scans the code, extracts the network details, and lets you join
-        from a single desktop window.
-      </p>
-      <div class="hero-actions">
+      <div class="mode-switch" role="tablist" aria-label="What do you want to do?">
+        <button id="mode-join" class="mode-tab" role="tab" aria-selected="true" aria-controls="scanner-panel">Join a network</button>
+        <button id="mode-share" class="mode-tab" role="tab" aria-selected="false" aria-controls="share-panel">Share a network</button>
+      </div>
+      <h1 id="hero-title">${HERO_TEXT.join.title}</h1>
+      <p id="hero-lede" class="lede">${HERO_TEXT.join.lede}</p>
+      <div id="join-actions" class="hero-actions">
         <button id="start-scan" class="button button-primary">Start camera</button>
         <button id="rescan" class="button button-secondary" disabled>Scan again</button>
       </div>
       <p id="status" class="status" role="status" aria-live="polite">Camera is idle.</p>
     </section>
 
-    <section class="scanner-panel">
+    <section id="scanner-panel" class="scanner-panel" role="tabpanel">
       <div class="video-frame">
         <video id="scanner-video" class="video" muted playsinline></video>
         <div class="scan-overlay"></div>
@@ -76,6 +96,43 @@ app.innerHTML = `
         </div>
       </article>
     </section>
+
+    <section id="share-panel" class="share-panel" role="tabpanel" hidden>
+      <form id="share-form" class="share-form" autocomplete="off">
+        <label class="field">
+          <span>Network name</span>
+          <input id="share-ssid" type="text" spellcheck="false" autocapitalize="off" />
+        </label>
+        <label class="field">
+          <span>Security</span>
+          <select id="share-security">
+            <option value="WPA">WPA / WPA2 / WPA3</option>
+            <option value="WEP">WEP</option>
+            <option value="nopass">None (open network)</option>
+          </select>
+        </label>
+        <label id="share-password-field" class="field">
+          <span>Password</span>
+          <span class="password-row">
+            <input id="share-password" type="password" spellcheck="false" autocapitalize="off" />
+            <button id="share-reveal" type="button" class="button button-secondary">Show</button>
+          </span>
+        </label>
+        <label class="checkbox">
+          <input id="share-hidden" type="checkbox" />
+          <span>Hidden network</span>
+        </label>
+      </form>
+
+      <article id="qr-card" class="qr-card is-empty">
+        <canvas id="share-canvas" class="qr-canvas" role="img" aria-label="Wi-Fi QR code"></canvas>
+        <p id="share-hint" class="qr-hint">Enter your network's name and password to make a code.</p>
+        <p class="system-note">Anyone who sees or photographs this code can join the network. Only share it with people you trust.</p>
+        <div class="result-actions">
+          <button id="share-save" class="button button-primary" disabled>Save image…</button>
+        </div>
+      </article>
+    </section>
   </main>
 `;
 
@@ -90,11 +147,44 @@ const ssidElement = queryElement<HTMLElement>("#ssid");
 const securityElement = queryElement<HTMLElement>("#security");
 const passwordElement = queryElement<HTMLElement>("#password");
 const hiddenElement = queryElement<HTMLElement>("#hidden");
+const modeJoinTab = queryElement<HTMLButtonElement>("#mode-join");
+const modeShareTab = queryElement<HTMLButtonElement>("#mode-share");
+const heroTitle = queryElement<HTMLElement>("#hero-title");
+const heroLede = queryElement<HTMLElement>("#hero-lede");
+const joinActions = queryElement<HTMLElement>("#join-actions");
+const scannerPanel = queryElement<HTMLElement>("#scanner-panel");
+const sharePanel = queryElement<HTMLElement>("#share-panel");
+const shareForm = queryElement<HTMLFormElement>("#share-form");
+const shareSsid = queryElement<HTMLInputElement>("#share-ssid");
+const shareSecurity = queryElement<HTMLSelectElement>("#share-security");
+const sharePasswordField = queryElement<HTMLElement>("#share-password-field");
+const sharePassword = queryElement<HTMLInputElement>("#share-password");
+const shareReveal = queryElement<HTMLButtonElement>("#share-reveal");
+const shareHidden = queryElement<HTMLInputElement>("#share-hidden");
+const qrCard = queryElement<HTMLElement>("#qr-card");
+const shareCanvas = queryElement<HTMLCanvasElement>("#share-canvas");
+const shareHint = queryElement<HTMLElement>("#share-hint");
+const shareSave = queryElement<HTMLButtonElement>("#share-save");
 
 const reader = new BrowserMultiFormatReader();
 let controls: IScannerControls | null = null;
 let currentPayload: WifiPayload | null = null;
 let state: ScannerState = "idle";
+let mode: Mode = "join";
+let saving = false;
+
+modeJoinTab.addEventListener("click", () => setMode("join"));
+modeShareTab.addEventListener("click", () => setMode("share"));
+shareForm.addEventListener("input", updateSharePreview);
+shareForm.addEventListener("submit", (event) => event.preventDefault());
+shareReveal.addEventListener("click", () => {
+  const reveal = sharePassword.type === "password";
+  sharePassword.type = reveal ? "text" : "password";
+  shareReveal.textContent = reveal ? "Hide" : "Show";
+});
+shareSave.addEventListener("click", () => {
+  void saveShareImage();
+});
 
 startButton.addEventListener("click", () => {
   resetResult();
@@ -243,8 +333,86 @@ function setError(message: string): void {
   toggleControls();
 }
 
+function setMode(next: Mode): void {
+  if (next === mode || state === "joining") {
+    return;
+  }
+  mode = next;
+
+  // Leaving the scanner turns the camera off.
+  if (next === "share" && state === "scanning") {
+    stopScan();
+    state = "idle";
+    toggleControls();
+  }
+
+  const sharing = next === "share";
+  modeJoinTab.setAttribute("aria-selected", String(!sharing));
+  modeShareTab.setAttribute("aria-selected", String(sharing));
+  scannerPanel.hidden = sharing;
+  joinActions.hidden = sharing;
+  sharePanel.hidden = !sharing;
+  heroTitle.textContent = HERO_TEXT[next].title;
+  heroLede.textContent = HERO_TEXT[next].lede;
+  setStatus(sharing ? "Nothing leaves this computer until you save the image." : "Camera is idle.");
+  if (sharing) {
+    shareSsid.focus();
+  }
+}
+
+function updateSharePreview(): void {
+  const security = shareSecurity.value as WifiSecurity;
+  sharePasswordField.hidden = security === "nopass";
+
+  try {
+    const payload = buildWifiQr({
+      ssid: shareSsid.value,
+      password: sharePassword.value,
+      security,
+      hidden: shareHidden.checked,
+    });
+    drawWifiQr(shareCanvas, payload, shareSsid.value);
+    qrCard.classList.remove("is-empty");
+    shareHint.textContent = `Guests can scan this to join '${revealInvisible(shareSsid.value)}'.`;
+    shareSave.disabled = saving;
+  } catch (error) {
+    shareCanvas.width = 0;
+    shareCanvas.height = 0;
+    qrCard.classList.add("is-empty");
+    shareHint.textContent = shareSsid.value
+      ? getErrorMessage(error, "These details can't make a QR code.")
+      : "Enter your network's name and password to make a code.";
+    shareSave.disabled = true;
+  }
+}
+
+async function saveShareImage(): Promise<void> {
+  if (saving || qrCard.classList.contains("is-empty")) {
+    return;
+  }
+  saving = true;
+  shareSave.disabled = true;
+
+  try {
+    const png = await canvasToPng(shareCanvas);
+    const saved = await invoke<boolean>("save_qr_image", {
+      png: Array.from(png),
+      suggestedName: shareSsid.value,
+    });
+    if (saved) {
+      setStatus("Saved the QR code image.");
+    }
+  } catch (error) {
+    setStatus(getErrorMessage(error, "Could not save the QR code image."));
+  } finally {
+    saving = false;
+    shareSave.disabled = qrCard.classList.contains("is-empty");
+  }
+}
+
 function toggleControls(): void {
   const busy = state === "scanning" || state === "joining";
+  modeShareTab.disabled = state === "joining";
   startButton.disabled = busy;
   rescanButton.disabled = busy;
   joinButton.disabled = !currentPayload || busy;
