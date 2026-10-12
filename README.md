@@ -14,6 +14,9 @@ Wi-Fi QR code and joins the network.
    network whose security matches the QR code.
 5. Shares a network: type its details to make a Wi-Fi QR code guests can scan,
    and save it as an image. Nothing is stored or sent anywhere.
+6. Checks a connection: tests the network link, router, DNS, and internet one
+   step at a time, spots sign-in (captive) pages, and explains the result in
+   plain language.
 
 Example QR payload:
 
@@ -135,9 +138,11 @@ GitHub workflow, which uses a real Windows runner.
 
 ## Security & Privacy
 
-WiLens runs entirely on your Mac — no servers, no accounts, no tracking, and no
-network calls of its own. Camera images, network names, and passwords never leave
-your computer. See [SECURITY.md](SECURITY.md) for the full breakdown and how to
+WiLens runs entirely on your Mac — no servers, no accounts, no tracking. Its only
+network traffic is the connection check, and only when you click **Run check**: it
+pings your router and fetches a tiny page from `captive.apple.com` (Windows:
+`www.msftconnecttest.com`), the same address the system uses to detect sign-in
+pages. Camera images, network names, and passwords never leave your computer. See [SECURITY.md](SECURITY.md) for the full breakdown and how to
 verify it yourself.
 
 ## Project Docs

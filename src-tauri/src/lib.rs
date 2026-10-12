@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 
+mod diagnose;
 mod netsh;
 #[cfg(any(target_os = "macos", windows))]
 mod process;
@@ -61,6 +62,23 @@ async fn join_wifi(
     .map_err(|error| ErrorResponse {
         message: format!("Wi-Fi join task ended unexpectedly: {error}"),
     })?
+}
+
+/// Run the connection check, sending each step to the UI as it finishes.
+/// Pings and DNS lookups block for seconds, so they run on the blocking pool.
+#[tauri::command]
+async fn check_connection(
+    on_step: Channel<diagnose::Step>,
+) -> Result<diagnose::Report, ErrorResponse> {
+    tauri::async_runtime::spawn_blocking(move || {
+        diagnose::run(&|step| {
+            let _ = on_step.send(step.clone());
+        })
+    })
+    .await
+    .map_err(|error| ErrorResponse {
+        message: format!("The connection check ended unexpectedly: {error}"),
+    })
 }
 
 /// Largest QR image the frontend may ask to save. A rendered Wi-Fi QR code is a
@@ -353,7 +371,11 @@ pub fn run() {
             request_location_authorization();
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![join_wifi, save_qr_image])
+        .invoke_handler(tauri::generate_handler![
+            join_wifi,
+            save_qr_image,
+            check_connection
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
