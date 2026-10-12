@@ -5,9 +5,6 @@ Wi-Fi QR code and joins the network.
 
 [![WiLens intro video](docs/media/wilens-intro.gif)](docs/media/wilens-intro.mp4)
 
-[Watch the full-quality video (MP4)](docs/media/wilens-intro.mp4). It's made
-with [Remotion](https://www.remotion.dev); see `video/` to edit and re-render it.
-
 ## What It Does
 
 1. Opens the camera in a desktop window.
