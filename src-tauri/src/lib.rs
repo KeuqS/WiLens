@@ -119,7 +119,8 @@ fn join_platform(
 ) -> Result<Joined, ErrorResponse> {
     use wifi::CoreWlanError;
 
-    let corewlan_result = if wifi::location_denied() {
+    let location_denied = wifi::location_denied();
+    let corewlan_result = if location_denied {
         Err(CoreWlanError::Unavailable(
             "Location access is denied, so CoreWLAN cannot scan.".to_string(),
         ))
@@ -136,28 +137,30 @@ fn join_platform(
         // The network itself refused the join; networksetup would only repeat
         // the same failure after another long wait.
         Err(CoreWlanError::Rejected(message)) => Err(ErrorResponse { message }),
+        // networksetup can neither check a network's security nor take a
+        // password except as a command-line argument, so it is only used for
+        // open networks. Secured networks need the CoreWLAN path, which picks
+        // a network whose security matches the QR code.
+        Err(CoreWlanError::Unavailable(corewlan_error)) if security != "nopass" => {
+            log::warn!("CoreWLAN join failed for a secured network: {corewlan_error}");
+            Err(ErrorResponse {
+                message: if location_denied {
+                    format!(
+                        "Joining a secured network needs Location access, so WiLens can check that '{ssid}' is the network in the QR code. Allow WiLens in System Settings > Privacy & Security > Location Services, or copy the password and join from the Wi-Fi menu."
+                    )
+                } else {
+                    corewlan_error
+                },
+            })
+        }
         Err(CoreWlanError::Unavailable(corewlan_error)) => {
             log::warn!("CoreWLAN join failed, falling back to networksetup: {corewlan_error}");
             ensure_not_flag(ssid, "SSID")?;
-            if let Some(password) = password {
-                ensure_not_flag(password, "Password")?;
-            }
-            // networksetup stores whatever password it is given, so a QR code
-            // naming a network the user already saved could replace their
-            // working password. Leave saved networks to macOS.
-            if wifi::is_saved_network(ssid) {
-                return Err(ErrorResponse {
-                    message: format!(
-                        "'{ssid}' is already saved on this Mac. Pick it from the Wi-Fi menu, or allow Location access for WiLens so it can join safely."
-                    ),
-                });
-            }
             progress("Trying the system fallback...");
-            let interface = wifi::join_via_networksetup(ssid, security, password)
-                .map_err(|message| ErrorResponse { message })?;
+            let interface =
+                wifi::join_via_networksetup(ssid).map_err(|message| ErrorResponse { message })?;
             // The SSID is unreadable without Location access, so the join can
-            // only be confirmed when it is readable and matches. networksetup
-            // cannot be told the security type, so check that afterwards too.
+            // only be confirmed when it is readable and matches.
             let verified = match wifi::default_interface_ssid() {
                 Some(current) if current != ssid => {
                     return Err(ErrorResponse {
@@ -166,16 +169,7 @@ fn join_platform(
                         ),
                     });
                 }
-                Some(_) => {
-                    if !wifi::current_security_matches(security) {
-                        return Err(ErrorResponse {
-                            message: format!(
-                                "Joined a network named '{ssid}', but it does not use the security the QR code declares. Check the Wi-Fi menu before using it."
-                            ),
-                        });
-                    }
-                    true
-                }
+                Some(_) => true,
                 None => false,
             };
             Ok(Joined {

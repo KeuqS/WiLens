@@ -87,6 +87,9 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Audit frontend dependencies
         run: bun install --frozen-lockfile && bun audit
+      - name: Audit promo video dependencies
+        run: bun install --frozen-lockfile && bun audit
+        working-directory: video
       - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
       - name: Audit Rust dependencies
         run: |

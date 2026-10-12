@@ -45,9 +45,11 @@ WiLens may trigger system prompts for:
   Wi-Fi networks. WiLens only uses it to find and join your network; it never
   collects, stores, or shares your location. Granting it lets WiLens join
   quietly via CoreWLAN, with no administrator prompt.
-- **Administrator approval** — only as a fallback. If the quiet CoreWLAN join
-  can't connect (e.g. Location was denied), WiLens falls back to the
-  `networksetup` tool, which asks for an administrator name and password.
+- **Administrator approval** — only as a fallback for open networks. If the
+  quiet CoreWLAN join can't run (e.g. Location was denied), WiLens joins open
+  networks with the `networksetup` tool, which may ask for an administrator
+  name and password. Secured networks need Location access so WiLens can check
+  the network's security; otherwise use Copy password below.
 
 ## Copy Password Fallback
 

@@ -10,8 +10,8 @@ Wi-Fi QR code and joins the network.
 1. Opens the camera in a desktop window.
 2. Scans a standard Wi-Fi QR code.
 3. Shows the network before joining.
-4. Joins the network via CoreWLAN — no administrator prompt — and falls back to
-   `networksetup` only if that can't connect.
+4. Joins the network via CoreWLAN — no administrator prompt — and only joins a
+   network whose security matches the QR code.
 
 Example QR payload:
 
@@ -40,6 +40,13 @@ If macOS instead says *"WiLens is damaged and can't be opened"* (builds up to
 xattr -dr com.apple.quarantine /Applications/WiLens.app
 ```
 
+Each release also lists a `.sha256` checksum next to the download. To check
+the file you downloaded:
+
+```sh
+shasum -a 256 -c WiLens.dmg.sha256
+```
+
 **Windows (x64, experimental):** releases also include `WiLens-setup.exe`,
 which joins Wi-Fi through a per-user `netsh wlan` profile (no administrator
 prompt). It is unsigned, so SmartScreen asks first — choose **More info → Run
@@ -47,8 +54,9 @@ anyway**. WPA3-only networks are not supported yet.
 
 ## Current Status
 
-WiLens joins Wi-Fi via CoreWLAN (no administrator prompt), verifying the
-connection and falling back to `networksetup` if needed. Local builds produce:
+WiLens joins Wi-Fi via CoreWLAN (no administrator prompt), checking that the
+network's security matches the QR code and verifying the connection. Open
+networks can fall back to `networksetup`. Local builds produce:
 
 - `src-tauri/target/release/bundle/macos/WiLens.app`
 - `src-tauri/target/release/bundle/dmg/WiLens_<version>_aarch64.dmg`
@@ -78,8 +86,10 @@ Build production again:
 cargo tauri build
 ```
 
-Build and produce the release installer named `WiLens.dmg` (what the download
-page links to) in one step:
+Published releases get `WiLens.dmg` (with a checksum) from the `macOS build`
+workflow, which signs and notarizes it once the `APPLE_*` secrets listed in
+`.github/workflows/build-macos.yml` are set. To build the same installer
+locally (ad-hoc signed) in one step:
 
 ```bash
 bun run release:dmg
@@ -115,8 +125,10 @@ GitHub workflow, which uses a real Windows runner.
 ## Notes
 
 - WiLens targets macOS on Apple Silicon. The Windows (x64) build is experimental.
-- If Location is denied or the quiet join can't connect, WiLens falls back to the
-  `networksetup` tool, which shows a macOS administrator approval prompt.
+- Without Location access WiLens cannot check a secured network, so it only
+  joins open networks (through the `networksetup` tool, which may show a macOS
+  administrator prompt). For secured networks it asks you to allow Location, or
+  to copy the password and join from the Wi-Fi menu.
 - All permission prompts are controlled by macOS, not by the app UI.
 
 ## Security & Privacy

@@ -52,13 +52,15 @@ pub fn join_via_netsh(
 ) -> Result<NetshJoin, String> {
     validate_profile_name(ssid)?;
 
+    // Being on a network with this name does not prove it is the network the
+    // QR code describes: anyone can broadcast any SSID. Disconnect and join
+    // again through the profile, whose security settings Windows enforces.
+    // Disconnecting first also stops the old link from passing verification.
     if let Some(status) = interface_status() {
         if status.ssids.iter().any(|current| current == ssid) {
-            log::info!("Already connected to '{ssid}'");
-            return Ok(NetshJoin {
-                interface: status.interface,
-                verified: true,
-            });
+            progress(&format!("Reconnecting to '{ssid}'..."));
+            netsh(&["wlan", "disconnect"])
+                .map_err(|error| format!("Could not reconnect to '{ssid}': {error}"))?;
         }
     }
 

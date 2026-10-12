@@ -18,9 +18,10 @@ const systemNote = isWindows
      it — no administrator prompt. On Windows 11, turning on Location access
      for desktop apps lets WiLens confirm the connection.`
   : `macOS requires Location access to scan for Wi-Fi networks, so it asks
-     the first time — WiLens never tracks your location. If the quick join
-     can't connect, it falls back to <code>networksetup</code>, which may
-     show a macOS administrator prompt.`;
+     the first time — WiLens never tracks your location. It uses the scan to
+     check the network matches the QR code. Without Location access WiLens can
+     still join open networks; for secured ones, copy the password and join
+     from the Wi-Fi menu.`;
 
 if (!app) {
   throw new Error("App root element was not found.");

@@ -15,6 +15,13 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
 
+  # Promo video (Remotion; not shipped, but audited in CI)
+  - package-ecosystem: "bun"
+    directory: "/video"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
   # Rust / Tauri backend
   - package-ecosystem: "cargo"
     directory: "/src-tauri"

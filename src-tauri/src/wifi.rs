@@ -226,18 +226,6 @@ fn current_ssid(interface: &CWInterface) -> Option<String> {
     unsafe { interface.ssid().map(|name| name.to_string()) }
 }
 
-/// Whether the default Wi-Fi interface's current security satisfies the QR
-/// code's normalized security type. An unreadable security mode counts as a
-/// mismatch.
-#[cfg(target_os = "macos")]
-pub fn current_security_matches(security: &str) -> bool {
-    unsafe {
-        CWWiFiClient::sharedWiFiClient()
-            .interface()
-            .is_some_and(|interface| accepted_securities(security).contains(&interface.security()))
-    }
-}
-
 /// The SSID of the default Wi-Fi interface, if CoreWLAN can report it.
 #[cfg(target_os = "macos")]
 pub fn default_interface_ssid() -> Option<String> {
@@ -253,29 +241,14 @@ fn nserror_message(error: &NSError) -> String {
     error.to_string()
 }
 
-/// Join a network using the legacy `networksetup` command. Returns the
-/// interface name on success.
-pub fn join_via_networksetup(
-    ssid: &str,
-    security: &str,
-    password: Option<&str>,
-) -> Result<String, String> {
+/// Join an open network using the legacy `networksetup` command. Returns the
+/// interface name on success. Secured networks never come here: networksetup
+/// would need the password on its command line and cannot check security.
+pub fn join_via_networksetup(ssid: &str) -> Result<String, String> {
     let interface = detect_wifi_interface()?;
 
-    let mut args = vec![
-        "-setairportnetwork".to_string(),
-        interface.clone(),
-        ssid.to_string(),
-    ];
-
-    if security != "nopass" {
-        let value =
-            password.ok_or_else(|| "Password is required for secured networks.".to_string())?;
-        args.push(value.to_string());
-    }
-
     let output = run_with_timeout(
-        Command::new("/usr/sbin/networksetup").args(&args),
+        Command::new("/usr/sbin/networksetup").args(["-setairportnetwork", &interface, ssid]),
         NETWORKSETUP_TIMEOUT,
         "networksetup",
     )?;
@@ -303,43 +276,6 @@ fn reports_failure(output: &str) -> bool {
     ["could not", "failed", "error"]
         .iter()
         .any(|needle| lower.contains(needle))
-}
-
-/// Whether `ssid` is in the Wi-Fi interface's preferred (saved) network list.
-/// An unreadable list counts as not saved, matching the behavior before this
-/// check existed.
-pub fn is_saved_network(ssid: &str) -> bool {
-    let Ok(interface) = detect_wifi_interface() else {
-        return false;
-    };
-    let output = run_with_timeout(
-        Command::new("/usr/sbin/networksetup")
-            .args(["-listpreferredwirelessnetworks", interface.as_str()]),
-        NETWORKSETUP_TIMEOUT,
-        "networksetup",
-    );
-    match output {
-        Ok(output) if output.status.success() => {
-            parse_preferred_networks(&String::from_utf8_lossy(&output.stdout))
-                .iter()
-                .any(|saved| saved == ssid)
-        }
-        _ => {
-            log::warn!("Could not read the saved Wi-Fi network list");
-            false
-        }
-    }
-}
-
-/// Parse `networksetup -listpreferredwirelessnetworks`: a header line, then one
-/// tab-indented SSID per line. Only the indent is stripped so SSIDs keep any
-/// leading or trailing spaces of their own.
-pub fn parse_preferred_networks(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .filter_map(|line| line.strip_prefix('\t'))
-        .map(|ssid| ssid.trim_end_matches('\r').to_string())
-        .collect()
 }
 
 pub fn detect_wifi_interface() -> Result<String, String> {
@@ -396,7 +332,7 @@ pub fn parse_hardware_ports(output: &str) -> Vec<HardwarePort> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_hardware_ports, parse_preferred_networks, reports_failure};
+    use super::{parse_hardware_ports, reports_failure};
 
     #[test]
     fn detects_networksetup_failure_text() {
@@ -405,14 +341,6 @@ mod tests {
             "Failed to join network MyWifi.\nError: -3900  The operation couldn't be completed."
         ));
         assert!(!reports_failure(""));
-    }
-
-    #[test]
-    fn parses_preferred_networks_keeping_ssid_spaces() {
-        let saved = parse_preferred_networks(
-            "Preferred networks on en0:\n\tHome\n\tCafe Upstairs \n\t Leading\n",
-        );
-        assert_eq!(saved, vec!["Home", "Cafe Upstairs ", " Leading"]);
     }
 
     #[test]
