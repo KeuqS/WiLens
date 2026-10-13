@@ -27,7 +27,7 @@
 
 - [x] Create a Tauri command in Rust for joining Wi-Fi.
 - [x] Detect the Wi-Fi interface in Rust before running `networksetup`.
-- [x] Call `networksetup -setairportnetwork`.
+- [x] Call `networksetup -setairportnetwork`. *(now only a fallback for open networks; see Phase 8)*
 - [x] Capture stdout, stderr, and exit status.
 - [x] Return structured error messages to the frontend.
 
@@ -58,16 +58,16 @@
 
 ## Nice-to-Have
 
-- [ ] Auto-detect the Wi-Fi interface.
-- [ ] Save recent scans locally.
-- [ ] Keep a short connection history.
-- [ ] Add a recent-networks screen.
+- [x] Auto-detect the Wi-Fi interface. *(`detect_wifi_interface` in `wifi.rs`)*
 - [ ] Add optional native scanning research with `nokhwa` and Vision.
+- Recent scans, connection history, and a recent-networks screen are moved to
+  [Deliberately postponed](#deliberately-postponed): they mean storing network
+  names on disk, which the privacy promise currently rules out.
 
 ## Known Behavior
 
 - [x] `networksetup` may trigger a macOS administrator or keychain approval prompt during join.
-- [ ] Verify whether the prompt can be reduced or better explained for repeated joins on the same machine.
+- [x] Reduce the prompt: CoreWLAN joins quietly, and `networksetup` now only runs for open networks when Location is denied.
 
 ## Definition of Done for MVP
 
@@ -120,3 +120,128 @@ Business items intentionally dropped — WiLens is an open-source utility.
 ### 7f. Tooling / CI
 
 - [x] Add a CI workflow: `tsc --noEmit`, `vitest`, `cargo test`, `cargo clippy`.
+
+---
+
+## Phase 8: Security Audit Fixes (done)
+
+From the full security audit (2026-10-12, report in `~/security-audit-skill/WiLens/run-1/`). Shipped in #52.
+
+- [x] Windows: reject `*` and `?` in network names so a failed join can't run `netsh wlan delete profile name=*`.
+- [x] Windows: never overwrite or delete a profile that already existed; roll back only profiles this join created.
+- [x] macOS: only join a scanned network whose security matches the QR code (no same-name "evil twin" with weaker security).
+- [x] macOS: limit the `networksetup` fallback to open networks (no password on its command line, no unchecked joins).
+- [x] Windows: reconnect through the profile instead of trusting "already connected" by name.
+- [x] Redact the password from `Debug` output; reveal hidden bidi / zero-width characters in SSIDs.
+- [x] Drop `'unsafe-inline'` from the production CSP (kept in `devCsp`).
+- [x] CI: read-only tokens by default, SHA-pinned actions, release-only write jobs, `video/` audited.
+- [x] Release checksums; macOS workflow ready to sign and notarize once secrets exist.
+
+## Phase 9: Share a Network (done)
+
+Shipped in #56.
+
+- [x] Join / Share mode switch.
+- [x] Build `WIFI:` payloads with validation (SSID ≤ 32 bytes, WPA / WEP key formats) and escaping.
+- [x] Live QR preview with the network name printed under the code (password never drawn as text).
+- [x] Save as PNG through a Rust-side save dialog (no new webview permissions).
+- [x] Round-trip tests: build → parse, and encode → decode.
+
+## Phase 10: Connection Check (done, landing)
+
+Reviewed in #57; landing on `main` via #58.
+
+- [x] Check link, router, DNS, and internet in order, streaming each step to the UI.
+- [x] Detect sign-in (captive) pages with the OS's own probe page.
+- [x] One plain-language verdict; a router that ignores ping doesn't fail the check on its own.
+- [x] Copy a report with no passwords or network names.
+- [x] Privacy docs describe exactly which hosts the check contacts and when.
+
+---
+
+# Roadmap
+
+Direction: **Connect, Share, Check** — the simplest open-source way to get a
+computer onto Wi-Fi, share it, and understand why it isn't working. Keep the
+app small, local-first, and account-free. Each phase should ship on its own.
+
+## Phase 11: Release & Trust (next)
+
+The biggest barrier to new users is installing an unsigned app.
+
+- [ ] Get an Apple Developer ID and add the `APPLE_*` secrets so `build-macos.yml` signs and notarizes `WiLens.dmg`.
+- [ ] Run the `macOS build` workflow once by hand before the next release.
+- [ ] Remove the "Open Anyway" / `xattr` instructions from the README and landing page once releases are notarized.
+- [ ] Windows: sign the installer (or document SmartScreen honestly until then).
+- [ ] Publish a Homebrew cask (`brew install --cask wilens`).
+- [ ] Publish to winget once the Windows build is no longer experimental.
+- [ ] Record a new demo GIF covering Join, Share, and Check.
+- [ ] Release notes for each version (what changed, what to test).
+
+## Phase 12: Real-Device Testing
+
+Several behaviors depend on the OS and can't be proven in CI.
+
+- [ ] macOS: join WPA2, WPA3, WEP, and open networks with Location allowed.
+- [ ] macOS: with Location denied, a secured QR shows the Location message and an open one joins.
+- [ ] macOS: a same-name open network is refused when the QR declares WPA.
+- [ ] Windows 10 and 11: first join creates a profile; re-scan reuses it; a saved profile is never overwritten.
+- [ ] Windows: a network name with `*` or `?` is refused.
+- [ ] Windows 11 24H2 with Location denied: join reports "could not confirm" and doesn't delete the profile.
+- [ ] Share: save a PNG, scan it with iPhone and Android cameras, and confirm both offer to join.
+- [ ] Check: working network, Wi-Fi off, router unplugged from the internet, and a hotel/café sign-in page.
+- [ ] Turn the results into a short `docs/testing.md` checklist for each release.
+
+## Phase 13: Connect Improvements
+
+- [ ] Scan a QR code from an image file, the clipboard, or drag-and-drop (no camera needed).
+- [ ] Scan a QR code shown on screen (e.g. a code in a chat or a PDF).
+- [ ] After a failed join, offer **Check connection** with one click.
+- [ ] Windows: support WPA3-only networks (`WPA3SAE` profile) where the OS allows it.
+- [ ] Windows: replace `netsh` with the Native Wifi API (`WlanSetProfile`, `WlanConnect`) for non-localized results and literal profile names.
+- [ ] macOS: handle hidden networks explicitly (`includeHidden` scan plus a clearer "not found" message).
+- [ ] Explain common failures in plain language (wrong password, network out of range, enterprise network not supported).
+
+## Phase 14: Share Improvements
+
+- [ ] Copy the QR image to the clipboard.
+- [ ] Printable card layout (network name, QR code, optional "scan to join" text).
+- [ ] "Share the network I'm on" — read the current SSID, and the password only after an explicit keychain prompt. Never store it.
+- [ ] Show the payload text for people who want to paste it elsewhere (behind a "show details" toggle).
+
+## Phase 15: Check Improvements
+
+- [ ] **Open sign-in page** button for captive portals (opens the system browser to a fixed probe URL, no arbitrary links).
+- [ ] Detect an active VPN and say when it may be the cause.
+- [ ] Check IPv6 connectivity separately.
+- [ ] Show Wi-Fi signal strength and channel when the OS reports them (no spectrum analysis).
+- [ ] Re-run individual steps; show how long each took.
+- [ ] Suggest next steps for each verdict (restart router, forget and rejoin, contact the network owner).
+
+## Phase 16: Contributors & Community
+
+- [ ] `CONTRIBUTING.md`: setup, tests, coding style, how to propose features.
+- [ ] Issue templates: bug report (with Copy report output), feature request, platform compatibility.
+- [ ] Label and publish good first issues, for example:
+  - [ ] Add parser tests for unusual payloads (`WIFI:` with fields in any order, trailing spaces, empty `H:`).
+  - [ ] Add property-based / fuzz tests for `parseWifiQr` and `buildWifiQr` round-trips.
+  - [ ] Add keyboard shortcuts for the three modes.
+  - [ ] Improve focus styles and screen-reader labels (accessibility pass).
+- [ ] Localization: extract UI strings and accept translations.
+- [ ] A lightweight public roadmap (this file, linked from the README).
+
+## Phase 17: Later
+
+- [ ] Linux support (NetworkManager) once macOS and Windows are dependable.
+- [ ] Share via a temporary local web page for devices without a camera.
+
+## Deliberately postponed
+
+Not ruled out, but only if users ask for them repeatedly:
+
+- Saved password vault, recent scans, or connection history — means storing secrets or network names on disk.
+- Always-on background monitoring — needs background activity and more permissions.
+- Full Wi-Fi spectrum analyzer — specialist tools already do this.
+- Local file transfer — a different product category (see LocalSend).
+- AI network assistant — complexity before a proven need.
+- Telemetry or analytics — conflicts with the privacy promise; use GitHub release stats and opt-in feedback instead.
