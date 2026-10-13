@@ -12,7 +12,7 @@
     "qrcode": "1.5.4",
     "react": "19",
     "react-dom": "19",
-    "remotion": "4.0.531"
+    "remotion": "4.0.534"
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",
