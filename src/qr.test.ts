@@ -79,6 +79,33 @@ describe("parseWifiQr", () => {
 
       expect(payload.hidden).toBe(false);
     });
+
+    it("treats an empty hidden flag as false", () => {
+      const payload = parseWifiQr("WIFI:T:WPA;S:Net;P:pw;H:;;");
+
+      expect(payload.hidden).toBe(false);
+    });
+  });
+
+  describe("real-world payload variations", () => {
+    it("accepts a payload without the optional trailing terminator", () => {
+      const payload = parseWifiQr("WIFI:T:WPA;S:Net;P:pw12345678");
+
+      expect(payload.ssid).toBe("Net");
+      expect(payload.password).toBe("pw12345678");
+    });
+
+    it("keeps field keys case-sensitive", () => {
+      expect(() => parseWifiQr("WIFI:t:WPA;s:Net;p:pw12345678;;")).toThrow(
+        /missing the SSID/i,
+      );
+    });
+
+    it("preserves Unicode SSIDs from a raw payload", () => {
+      const payload = parseWifiQr("WIFI:T:WPA;S:Café ☕;P:pw12345678;;");
+
+      expect(payload.ssid).toBe("Café ☕");
+    });
   });
 
   describe("escaped characters", () => {
