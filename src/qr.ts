@@ -167,3 +167,67 @@ function unescapeWifiValue(value: string): string {
 
   return unescaped;
 }
+
+export interface WifiShareInput {
+  ssid: string;
+  password: string;
+  security: WifiSecurity;
+  hidden: boolean;
+}
+
+const MAX_SSID_BYTES = 32;
+
+/**
+ * Build a standard `WIFI:` QR payload from details the user typed. Throws an
+ * Error with a user-facing message when the details could not work as a real
+ * network (so the shared code never fails on the guest's phone).
+ */
+export function buildWifiQr(input: WifiShareInput): string {
+  const { ssid, password, security, hidden } = input;
+
+  if (!ssid.trim()) {
+    throw new Error("Enter the network name.");
+  }
+  if (new TextEncoder().encode(ssid).length > MAX_SSID_BYTES) {
+    throw new Error("Network names can be at most 32 bytes long.");
+  }
+
+  if (security !== "nopass" && !password) {
+    throw new Error("Enter the password.");
+  }
+  if (security === "WPA" && !isValidWpaKey(password)) {
+    throw new Error("WPA passwords are 8 to 63 characters (or 64 hex digits).");
+  }
+  if (security === "WEP" && !isValidWepKey(password)) {
+    throw new Error("WEP keys are 5 or 13 characters (or 10 or 26 hex digits).");
+  }
+
+  const fields = [`T:${security}`, `S:${escapeWifiValue(ssid)}`];
+  if (security !== "nopass") {
+    fields.push(`P:${escapeWifiValue(password)}`);
+  }
+  if (hidden) {
+    fields.push("H:true");
+  }
+
+  return `WIFI:${fields.join(";")};;`;
+}
+
+function isValidWpaKey(password: string): boolean {
+  return (
+    (password.length >= 8 && password.length <= 63 && /^[\x20-\x7E]+$/.test(password)) ||
+    /^[0-9a-fA-F]{64}$/.test(password)
+  );
+}
+
+function isValidWepKey(password: string): boolean {
+  return (
+    ((password.length === 5 || password.length === 13) && /^[\x20-\x7E]+$/.test(password)) ||
+    /^([0-9a-fA-F]{10}|[0-9a-fA-F]{26})$/.test(password)
+  );
+}
+
+/** Escape the characters the `WIFI:` format reserves: `\ ; , : "`. */
+function escapeWifiValue(value: string): string {
+  return value.replace(/[\\;,:"]/g, "\\$&");
+}

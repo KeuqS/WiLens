@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWifiQr, revealInvisible } from "./qr";
+import { buildWifiQr, parseWifiQr, revealInvisible } from "./qr";
 
 describe("parseWifiQr", () => {
   it("parses a standard WPA payload", () => {
@@ -146,5 +146,50 @@ describe("revealInvisible", () => {
   it("shows bidi and zero-width characters as code points", () => {
     expect(revealInvisible("Home‮gnp.exe")).toBe("Home⟨U+202E⟩gnp.exe");
     expect(revealInvisible("Ca​fe")).toBe("Ca⟨U+200B⟩fe");
+  });
+});
+
+describe("buildWifiQr", () => {
+  const base = { ssid: "Cafe", password: "pw12345678", security: "WPA" as const, hidden: false };
+
+  it("builds a standard WPA payload", () => {
+    expect(buildWifiQr(base)).toBe("WIFI:T:WPA;S:Cafe;P:pw12345678;;");
+  });
+
+  it("omits the password for open networks and marks hidden ones", () => {
+    expect(buildWifiQr({ ...base, security: "nopass", hidden: true })).toBe(
+      "WIFI:T:nopass;S:Cafe;H:true;;",
+    );
+  });
+
+  it("escapes reserved characters so the payload round-trips", () => {
+    const input = {
+      ssid: 'Cafe;Bar:"5G",\\',
+      password: 'p;a:s,s"w\\rd',
+      security: "WPA" as const,
+      hidden: true,
+    };
+    const parsed = parseWifiQr(buildWifiQr(input));
+    expect(parsed.ssid).toBe(input.ssid);
+    expect(parsed.password).toBe(input.password);
+    expect(parsed.security).toBe("WPA");
+    expect(parsed.hidden).toBe(true);
+  });
+
+  it("round-trips non-ASCII network names", () => {
+    expect(parseWifiQr(buildWifiQr({ ...base, ssid: "咖啡店 Wi-Fi" })).ssid).toBe("咖啡店 Wi-Fi");
+  });
+
+  it("rejects details that could not work as a real network", () => {
+    expect(() => buildWifiQr({ ...base, ssid: "  " })).toThrow(/network name/i);
+    expect(() => buildWifiQr({ ...base, ssid: "x".repeat(33) })).toThrow(/32 bytes/);
+    expect(() => buildWifiQr({ ...base, password: "" })).toThrow(/Enter the password/);
+    expect(() => buildWifiQr({ ...base, password: "short" })).toThrow(/8 to 63/);
+    expect(() => buildWifiQr({ ...base, security: "WEP", password: "abcd" })).toThrow(/WEP/);
+  });
+
+  it("accepts hex keys", () => {
+    expect(() => buildWifiQr({ ...base, password: "a".repeat(64) })).not.toThrow();
+    expect(() => buildWifiQr({ ...base, security: "WEP", password: "0123456789" })).not.toThrow();
   });
 });

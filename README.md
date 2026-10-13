@@ -12,6 +12,8 @@ Wi-Fi QR code and joins the network.
 3. Shows the network before joining.
 4. Joins the network via CoreWLAN — no administrator prompt — and only joins a
    network whose security matches the QR code.
+5. Shares a network: type its details to make a Wi-Fi QR code guests can scan,
+   and save it as an image. Nothing is stored or sent anywhere.
 
 Example QR payload:
 
