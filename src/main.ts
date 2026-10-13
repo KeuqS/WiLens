@@ -11,12 +11,36 @@ import {
 import { canvasToPng, drawWifiQr } from "./share";
 
 type ScannerState = "idle" | "scanning" | "joining" | "joined" | "error";
-type Mode = "join" | "share";
+type Mode = "join" | "share" | "check";
+type CheckStatus = "pass" | "warn" | "fail" | "skipped";
+
+interface CheckStep {
+  id: string;
+  status: CheckStatus;
+  detail: string;
+}
+
+interface CheckReport {
+  steps: CheckStep[];
+  verdict: string;
+  summary: string;
+}
+
+const CHECK_STEPS: { id: string; label: string }[] = [
+  { id: "link", label: "Network connection" },
+  { id: "router", label: "Router" },
+  { id: "dns", label: "Website names (DNS)" },
+  { id: "internet", label: "Internet" },
+];
 
 const HERO_TEXT: Record<Mode, { title: string; lede: string }> = {
   join: {
     title: "Point your camera at a Wi-Fi QR code.",
     lede: "WiLens scans the code, extracts the network details, and lets you join from a single desktop window.",
+  },
+  check: {
+    title: "Find out why the internet isn't working.",
+    lede: "WiLens checks your connection one step at a time and tells you what's wrong in plain language.",
   },
   share: {
     title: "Share your Wi-Fi with a QR code.",
@@ -31,6 +55,7 @@ interface JoinWifiResponse {
 
 const app = document.querySelector<HTMLDivElement>("#app");
 const isWindows = navigator.userAgent.includes("Windows");
+const CHECK_HOST = isWindows ? "www.msftconnecttest.com" : "captive.apple.com";
 
 const systemNote = isWindows
   ? `WiLens saves a Wi-Fi profile for your Windows account and connects with
@@ -56,6 +81,7 @@ app.innerHTML = `
       <div class="mode-switch" role="tablist" aria-label="What do you want to do?">
         <button id="mode-join" class="mode-tab" role="tab" aria-selected="true" aria-controls="scanner-panel">Join a network</button>
         <button id="mode-share" class="mode-tab" role="tab" aria-selected="false" aria-controls="share-panel">Share a network</button>
+        <button id="mode-check" class="mode-tab" role="tab" aria-selected="false" aria-controls="check-panel">Check connection</button>
       </div>
       <h1 id="hero-title">${HERO_TEXT.join.title}</h1>
       <p id="hero-lede" class="lede">${HERO_TEXT.join.lede}</p>
@@ -133,6 +159,27 @@ app.innerHTML = `
         </div>
       </article>
     </section>
+
+    <section id="check-panel" class="check-panel" role="tabpanel" hidden>
+      <article class="check-card">
+        <p class="result-label">Connection check</p>
+        <h2 id="check-summary" class="check-summary">Run a check to see where the connection stops working.</h2>
+        <ol id="check-steps" class="check-steps">
+          ${CHECK_STEPS.map(
+            ({ id, label }) => `
+          <li data-step="${id}" data-status="idle">
+            <span class="check-label">${label}</span>
+            <span class="check-detail">Not checked yet</span>
+          </li>`,
+          ).join("")}
+        </ol>
+        <div class="result-actions">
+          <button id="check-run" class="button button-primary">Run check</button>
+          <button id="check-copy" class="button button-secondary" disabled>Copy report</button>
+        </div>
+        <p class="system-note">The check pings your router and asks ${CHECK_HOST} for a small page, the same address ${isWindows ? "Windows" : "macOS"} uses to detect sign-in pages. It only runs when you click Run check, and the report contains no passwords or network names.</p>
+      </article>
+    </section>
   </main>
 `;
 
@@ -149,6 +196,11 @@ const passwordElement = queryElement<HTMLElement>("#password");
 const hiddenElement = queryElement<HTMLElement>("#hidden");
 const modeJoinTab = queryElement<HTMLButtonElement>("#mode-join");
 const modeShareTab = queryElement<HTMLButtonElement>("#mode-share");
+const modeCheckTab = queryElement<HTMLButtonElement>("#mode-check");
+const checkPanel = queryElement<HTMLElement>("#check-panel");
+const checkSummary = queryElement<HTMLElement>("#check-summary");
+const checkRun = queryElement<HTMLButtonElement>("#check-run");
+const checkCopy = queryElement<HTMLButtonElement>("#check-copy");
 const heroTitle = queryElement<HTMLElement>("#hero-title");
 const heroLede = queryElement<HTMLElement>("#hero-lede");
 const joinActions = queryElement<HTMLElement>("#join-actions");
@@ -172,9 +224,18 @@ let currentPayload: WifiPayload | null = null;
 let state: ScannerState = "idle";
 let mode: Mode = "join";
 let saving = false;
+let checking = false;
+let lastReport: CheckReport | null = null;
 
 modeJoinTab.addEventListener("click", () => setMode("join"));
 modeShareTab.addEventListener("click", () => setMode("share"));
+modeCheckTab.addEventListener("click", () => setMode("check"));
+checkRun.addEventListener("click", () => {
+  void runCheck();
+});
+checkCopy.addEventListener("click", () => {
+  void copyCheckReport();
+});
 shareForm.addEventListener("input", updateSharePreview);
 shareForm.addEventListener("submit", (event) => event.preventDefault());
 shareReveal.addEventListener("click", () => {
@@ -340,23 +401,104 @@ function setMode(next: Mode): void {
   mode = next;
 
   // Leaving the scanner turns the camera off.
-  if (next === "share" && state === "scanning") {
+  if (next !== "join" && state === "scanning") {
     stopScan();
     state = "idle";
     toggleControls();
   }
 
-  const sharing = next === "share";
-  modeJoinTab.setAttribute("aria-selected", String(!sharing));
-  modeShareTab.setAttribute("aria-selected", String(sharing));
-  scannerPanel.hidden = sharing;
-  joinActions.hidden = sharing;
-  sharePanel.hidden = !sharing;
+  modeJoinTab.setAttribute("aria-selected", String(next === "join"));
+  modeShareTab.setAttribute("aria-selected", String(next === "share"));
+  modeCheckTab.setAttribute("aria-selected", String(next === "check"));
+  scannerPanel.hidden = next !== "join";
+  joinActions.hidden = next !== "join";
+  sharePanel.hidden = next !== "share";
+  checkPanel.hidden = next !== "check";
   heroTitle.textContent = HERO_TEXT[next].title;
   heroLede.textContent = HERO_TEXT[next].lede;
-  setStatus(sharing ? "Nothing leaves this computer until you save the image." : "Camera is idle.");
-  if (sharing) {
+  setStatus(
+    {
+      join: "Camera is idle.",
+      share: "Nothing leaves this computer until you save the image.",
+      check: "Nothing is checked until you click Run check.",
+    }[next],
+  );
+  if (next === "share") {
     shareSsid.focus();
+  }
+}
+
+async function runCheck(): Promise<void> {
+  if (checking) {
+    return;
+  }
+  checking = true;
+  lastReport = null;
+  checkRun.disabled = true;
+  checkRun.classList.add("is-busy");
+  checkRun.textContent = "Checking...";
+  checkCopy.disabled = true;
+  checkSummary.textContent = "Checking your connection...";
+  CHECK_STEPS.forEach(({ id }, index) =>
+    renderCheckStep({ id, status: "skipped", detail: index === 0 ? "Checking..." : "Waiting" }, index === 0 ? "running" : "idle"),
+  );
+
+  const onStep = new Channel<CheckStep>();
+  onStep.onmessage = (step) => {
+    renderCheckStep(step);
+    const next = CHECK_STEPS.findIndex(({ id }) => id === step.id) + 1;
+    if (next > 0 && next < CHECK_STEPS.length) {
+      renderCheckStep({ id: CHECK_STEPS[next].id, status: "skipped", detail: "Checking..." }, "running");
+    }
+  };
+
+  try {
+    const report = await invoke<CheckReport>("check_connection", { onStep });
+    report.steps.forEach((step) => renderCheckStep(step));
+    lastReport = report;
+    checkSummary.textContent = report.summary;
+    checkCopy.disabled = false;
+  } catch (error) {
+    checkSummary.textContent = getErrorMessage(error, "The connection check could not run.");
+  } finally {
+    checking = false;
+    checkRun.disabled = false;
+    checkRun.classList.remove("is-busy");
+    checkRun.textContent = "Run again";
+  }
+}
+
+/** Show one step's result; `override` marks a step as running or not started. */
+function renderCheckStep(step: CheckStep, override?: "running" | "idle"): void {
+  const item = checkPanel.querySelector<HTMLElement>(`[data-step="${step.id}"]`);
+  if (!item) {
+    return;
+  }
+  item.dataset.status = override ?? step.status;
+  const detail = item.querySelector<HTMLElement>(".check-detail");
+  if (detail) {
+    detail.textContent = step.detail;
+  }
+}
+
+async function copyCheckReport(): Promise<void> {
+  if (!lastReport) {
+    return;
+  }
+  const lines = [
+    "WiLens connection check",
+    `Result: ${lastReport.summary}`,
+    ...lastReport.steps.map((step) => {
+      const label = CHECK_STEPS.find(({ id }) => id === step.id)?.label ?? step.id;
+      return `- ${label}: ${step.status.toUpperCase()} - ${step.detail}`;
+    }),
+    `System: ${isWindows ? "Windows" : "macOS"}`,
+  ];
+  try {
+    await navigator.clipboard.writeText(lines.join("\n"));
+    setStatus("Copied the report. It contains no passwords or network names.");
+  } catch (error) {
+    setStatus(getErrorMessage(error, "Unable to copy the report."));
   }
 }
 

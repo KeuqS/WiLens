@@ -44,6 +44,23 @@ asks where to save a PNG (the network name is printed under the code; the
 password is not). Anyone who sees the code can join the network, so share it
 only with people you trust. WiLens does not keep the details after you close it.
 
+## Check a Connection
+
+Switch to **Check connection** and click **Run check**. WiLens tests four things
+in order and explains where the connection stops working:
+
+1. **Network connection:** is this computer on a network at all?
+2. **Router:** does the router answer? (Some routers ignore this check, so a
+   silent router only counts against the connection if later steps fail too.)
+3. **Website names (DNS):** can names like `captive.apple.com` be looked up?
+4. **Internet:** does the internet answer, or does a sign-in page answer
+   instead (common in hotels, airports, and cafés)?
+
+**Copy report** copies the result as text to paste into a support request. It
+contains no passwords or network names. The check only contacts your router and
+`captive.apple.com` (Windows: `www.msftconnecttest.com`), and only when you
+click the button.
+
 ## Expected macOS Prompts
 
 WiLens may trigger system prompts for:

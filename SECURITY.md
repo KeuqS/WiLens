@@ -5,9 +5,10 @@ camera and joins the network for you. This page explains exactly what it does,
 what it does **not** do, and how we keep it safe — so you can install it with
 confidence.
 
-**TL;DR:** WiLens runs entirely on your Mac. It has no servers, no accounts, no
-analytics, and no network calls of its own. Your camera images, Wi‑Fi names, and
-passwords never leave your computer. The full source code is in this repository.
+**TL;DR:** WiLens runs entirely on your Mac. It has no servers, no accounts, and
+no analytics. Its only network traffic is the connection check, which runs only
+when you click **Run check**. Your camera images, Wi‑Fi names, and passwords
+never leave your computer. The full source code is in this repository.
 
 ---
 
@@ -16,8 +17,15 @@ passwords never leave your computer. The full source code is in this repository.
 1. Opens your Mac's camera (with your permission) to look for a Wi‑Fi QR code.
 2. Reads the standard `WIFI:` QR payload (network name, password, security type).
 3. Asks macOS to join that network using Apple's built-in CoreWLAN API.
+4. Optionally makes a Wi‑Fi QR code from details you type, and saves it as an
+   image where you choose.
+5. Optionally checks your connection when you click **Run check**: it pings your
+   router and sends one plain HTTP request for a tiny page at
+   `captive.apple.com` (Windows: `www.msftconnecttest.com`), the address the
+   operating system itself uses to detect sign-in pages. The request carries no
+   information about you, your networks, or your passwords.
 
-That's the whole app. There is no cloud component.
+There is no cloud component.
 
 ## What WiLens does NOT do
 
@@ -67,7 +75,9 @@ front-end. We apply several layers of defense:
   the app can only run code shipped inside it — it cannot load or execute scripts
   from the internet. (See [`tauri.conf.json`](src-tauri/tauri.conf.json).)
 - **Minimal capabilities.** The front-end is granted only Tauri's default
-  permissions — no file-system, shell, or arbitrary-network access.
+  permissions — no file-system, shell, or arbitrary-network access. Saving a QR
+  image and the connection check run in Rust behind narrow, typed commands; the
+  front-end cannot choose a file path or a host to contact.
   (See [`src-tauri/capabilities/default.json`](src-tauri/capabilities/default.json).)
 - **Input is sanitized.** Data read from a QR code is untrusted, so the Rust core
   validates it before use: it rejects control characters and values that could be

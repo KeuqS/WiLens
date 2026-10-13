@@ -49,7 +49,8 @@ select {
 
 .hero,
 .scanner-panel,
-.share-panel {
+.share-panel,
+.check-panel {
   backdrop-filter: blur(20px);
   background: rgba(6, 13, 11, 0.35);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -276,7 +277,8 @@ h1 {
   }
 }
 
-.share-panel {
+.share-panel,
+.check-panel {
   display: grid;
   gap: 1rem;
   padding: 1rem;
@@ -360,6 +362,94 @@ h1 {
 
 .qr-card .system-note {
   margin: 0;
+}
+
+.check-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.4rem;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.check-summary {
+  margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
+.check-card .result-label,
+.check-card .system-note {
+  margin: 0;
+}
+
+.check-steps {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.check-steps li {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr;
+  column-gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: 18px;
+  background: rgba(6, 13, 11, 0.55);
+}
+
+.check-steps li::before {
+  content: "";
+  grid-row: span 2;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #10211d;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.check-steps li[data-status="pass"]::before {
+  content: "✓";
+  background: #7fd6a2;
+}
+
+.check-steps li[data-status="warn"]::before {
+  content: "!";
+  background: #f1d77a;
+}
+
+.check-steps li[data-status="fail"]::before {
+  content: "✕";
+  background: #f08a7e;
+}
+
+.check-steps li[data-status="skipped"]::before {
+  content: "–";
+  color: rgba(236, 243, 239, 0.7);
+}
+
+.check-steps li[data-status="running"]::before {
+  border: 2px solid #f1d77a;
+  border-right-color: transparent;
+  background: transparent;
+  animation: spin 700ms linear infinite;
+}
+
+.check-label {
+  font-weight: 600;
+}
+
+.check-detail {
+  color: rgba(236, 243, 239, 0.68);
+  font-size: 0.92rem;
 }
 
 .result-card {
